@@ -19,6 +19,10 @@ def client(tmp_path, monkeypatch):
         INSERT INTO products (id, name, price, stock) VALUES
             (1, 'Notebook', 500, 10),
             (2, 'Pen', 120, 100);
+        INSERT INTO coupons (code, kind, value, max_uses, used_count, expires_on) VALUES
+            ('OFF10', 'percent', 10, 100, 0, '2099-12-31'),
+            ('YEN300', 'fixed', 300, 100, 0, '2099-12-31'),
+            ('EXPIRED', 'percent', 10, 100, 0, '2000-01-01');
         """
     )
     conn.commit()
