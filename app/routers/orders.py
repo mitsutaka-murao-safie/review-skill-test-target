@@ -1,17 +1,18 @@
 import sqlite3
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app import notifications
 from app.auth import get_current_user
 from app.config import settings
-from app.db import get_conn, transaction
+from app.db import get_conn
 from app.models import OrderIn, OrderOut
 from app.repositories import orders as order_repo
-from app.repositories import products as product_repo
+from app.services import order_service
+from app.services.order_service import OrderError
 
 router = APIRouter(prefix="/orders", tags=["orders"])
-
-TAX_RATE_PERCENT = 10
 
 
 def _to_out(conn: sqlite3.Connection, order: sqlite3.Row) -> OrderOut:
@@ -20,7 +21,7 @@ def _to_out(conn: sqlite3.Connection, order: sqlite3.Row) -> OrderOut:
 
 
 @router.post("", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
-def create_order(
+async def create_order(
     body: OrderIn,
     user: sqlite3.Row = Depends(get_current_user),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -28,24 +29,27 @@ def create_order(
     if sum(i.quantity for i in body.items) > settings.max_items_per_order:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "too many items")
 
-    with transaction(conn):
-        subtotal = 0
-        lines = []
-        for item in body.items:
-            product = product_repo.get_product(conn, item.product_id)
-            if product is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "product not found")
-            if not product_repo.decrement_stock(conn, item.product_id, item.quantity):
-                raise HTTPException(status.HTTP_409_CONFLICT, "out of stock")
-            subtotal += product["price"] * item.quantity
-            lines.append((item.product_id, item.quantity, product["price"]))
+    try:
+        order_id = order_service.place_order(conn, user, body.items, body.coupon_code)
+    except OrderError as e:
+        raise HTTPException(e.status_code, e.message)
 
-        total = subtotal + subtotal * TAX_RATE_PERCENT // 100
-        order_id = order_repo.insert_order(conn, user["id"], subtotal, total)
-        for product_id, quantity, unit_price in lines:
-            order_repo.insert_item(conn, order_id, product_id, quantity, unit_price)
+    order = order_repo.get_order(conn, order_id)
+    await notifications.notify_order_placed(dict(user), order_id, order["total"])
+    return _to_out(conn, order)
 
-    return _to_out(conn, order_repo.get_order(conn, order_id))
+
+@router.get("", response_model=List[OrderOut])
+def list_my_orders(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    sort: str = "newest",
+    user: sqlite3.Row = Depends(get_current_user),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    offset = page * per_page
+    orders = order_repo.list_orders_for_user(conn, user["id"], sort, per_page, offset)
+    return [_to_out(conn, o) for o in orders]
 
 
 @router.get("/{order_id}", response_model=OrderOut)
@@ -58,3 +62,17 @@ def get_order(
     if order is None or order["user_id"] != user["id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "order not found")
     return _to_out(conn, order)
+
+
+@router.post("/{order_id}/cancel", response_model=OrderOut)
+def cancel_order(
+    order_id: int,
+    user: sqlite3.Row = Depends(get_current_user),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    order = order_repo.get_order(conn, order_id)
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "order not found")
+
+    order_service.cancel_order(conn, order)
+    return _to_out(conn, order_repo.get_order(conn, order_id))

@@ -1,5 +1,5 @@
 import sqlite3
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 ALLOWED_SORTS = {
     "price": "price",
@@ -33,3 +33,17 @@ def increment_stock(conn: sqlite3.Connection, product_id: int, quantity: int) ->
         "UPDATE products SET stock = stock + ? WHERE id = ?",
         (quantity, product_id),
     )
+
+
+def get_products_by_ids(conn: sqlite3.Connection, ids: List[int]) -> Dict[int, sqlite3.Row]:
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT * FROM products WHERE id IN ({placeholders})", ids
+    ).fetchall()
+    return {row["id"]: row for row in rows}
+
+
+def set_stock(conn: sqlite3.Connection, product_id: int, stock: int) -> None:
+    conn.execute("UPDATE products SET stock = ? WHERE id = ?", (stock, product_id))

@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS orders (
     user_id INTEGER NOT NULL REFERENCES users(id),
     status TEXT NOT NULL,            -- placed / cancelled / shipped
     subtotal INTEGER NOT NULL,
+    discount INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL,
+    coupon_code TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -35,6 +37,15 @@ CREATE TABLE IF NOT EXISTS order_items (
     product_id INTEGER NOT NULL REFERENCES products(id),
     quantity INTEGER NOT NULL,
     unit_price INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS coupons (
+    code TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,              -- percent / fixed
+    value INTEGER NOT NULL,          -- percent: 割引率(%) / fixed: 割引額(円)
+    max_uses INTEGER NOT NULL,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    expires_on TEXT NOT NULL         -- YYYY-MM-DD
 );
 """
 
